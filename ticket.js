@@ -97,7 +97,7 @@ const TEMPLATES = [
       fields: [
         { key: "label", label: "상단 라벨", type: "text", x: 30, y: 50, align: "left", fontWeight: 700, fontSize: 12, maxWidth: 300, placeholder: "ORIGINAL TICKET", default: "ORIGINAL TICKET" },
         { key: "no", label: "번호", type: "text", x: 730, y: 50, align: "right", fontSize: 12, maxWidth: 150, placeholder: "No. 01" },
-        { key: "title", label: "타이틀", type: "text", x: 30, y: 112, align: "left", fontStyle: "italic", fontWeight: 700, fontSize: 32, maxWidth: 700, placeholder: "Title" },
+        { key: "title", label: "타이틀", type: "text", x: 30, y: 112, align: "left", fontStyle: "italic", fontWeight: 700, fontSize: 32, maxWidth: 700, placeholder: "MOVIE TITLE" },
         { key: "date", label: "날짜", type: "text", x: 30, y: 165, align: "left", fontSize: 13, maxWidth: 300, placeholder: "2026.00.00", isDateField: true },
         { key: "cast", label: "캐스트", type: "text", x: 30, y: 190, align: "left", fontSize: 13, maxWidth: 700, placeholder: "CAST" },
         { key: "rating", label: "별점", type: "rating", x: 30, y: 232, fontSize: 22, align: "left" },
@@ -179,6 +179,8 @@ function createTextItemFromField(field) {
     isCustom: false,
     isDateField: !!field.isDateField,
     useTodayDate: false,
+    strokeEnabled: !!field.strokeEnabled,
+    strokeColor: field.strokeColor || "#000000",
   };
 }
 
@@ -414,6 +416,37 @@ function drawTextCursor(item, lineText, lineY) {
   ctx.stroke();
 }
 
+// 외곽선 색상으로 은은하게 번지는 블러(후광) 효과를 그리고, 그 위에 본문 글자를 얹는다.
+function fillTextWithStroke(item, text, x, y) {
+  if (item.strokeEnabled) {
+    const strokeColor = item.strokeColor || "#000000";
+
+    ctx.save();
+    
+    // 외곽선 색상을 그림자 색상으로 온전하게 지정
+    ctx.shadowColor = strokeColor;
+    
+    // 본체 글자는 화면 밖(멀리)에 대피시켜서 숨기고, 그림자만 원래 좌표(x, y)에 맺히게 만드는 편법
+    // 이렇게 하면 본체의 딱딱한 선이나 색상은 완벽히 숨고, '외곽선 색상의 그림자'만 원하는 위치에 남는다.
+    const offset = 10000; 
+    ctx.shadowOffsetX = offset;
+    ctx.shadowOffsetY = 0;
+
+    // 바깥 레이어: 넓고 은은하게 퍼지는 큰 블러 (원래 x에서 offset만큼 빼서 그려줌)
+    ctx.shadowBlur = Math.max(8, Math.round(item.fontSize * 0.4));
+    ctx.fillText(text, x - offset, y);
+
+    // 안쪽 레이어: 조금 더 또렷하게 잡아주는 좁은 블러
+    ctx.shadowBlur = Math.max(2, Math.round(item.fontSize * 0.15));
+    ctx.fillText(text, x - offset, y);
+
+    ctx.restore();
+  }
+  
+  // 최종 본문 글자 채우기
+  ctx.fillText(text, x, y);
+}
+
 function drawTextItem(item, tpl) {
   const isEditing = editingItemId === item.id;
 
@@ -425,7 +458,7 @@ function drawTextItem(item, tpl) {
     ctx.textBaseline = "alphabetic";
     let stars = "";
     for (let i = 0; i < 5; i++) stars += i < rating ? "★" : "☆";
-    ctx.fillText(stars, item.x, item.y);
+    fillTextWithStroke(item, stars, item.x, item.y);
     return;
   }
 
@@ -447,11 +480,11 @@ function drawTextItem(item, tpl) {
     const lineHeight = item.lineHeight || Math.round(item.fontSize * 1.3);
     // fillText의 4번째 인자(maxWidth)를 넘기면 글자가 찌그러지므로 쓰지 않는다.
     // 줄바꿈은 이미 wrapText에서 처리했으니, 넘치는 단어가 있어도 그대로 흘러넘치게 둔다.
-    lines.forEach((line, i) => ctx.fillText(line, item.x, item.y + i * lineHeight));
+    lines.forEach((line, i) => fillTextWithStroke(item, line, item.x, item.y + i * lineHeight));
     lastLineText = lines[lines.length - 1] || "";
     lastLineY = item.y + (lines.length - 1) * lineHeight;
   } else {
-    ctx.fillText(displayText, item.x, item.y);
+    fillTextWithStroke(item, displayText, item.x, item.y);
     lastLineText = displayText;
     lastLineY = item.y;
   }
@@ -1586,6 +1619,37 @@ function buildFieldCard(item, tpl) {
   styleRow.appendChild(colorInput);
   body.appendChild(styleRow);
 
+  const strokeRow = document.createElement("div");
+  strokeRow.className = "field-stroke-row";
+
+  const strokeToggle = document.createElement("label");
+  strokeToggle.className = "field-stroke-toggle";
+
+  const strokeCheckbox = document.createElement("input");
+  strokeCheckbox.type = "checkbox";
+  strokeCheckbox.checked = !!item.strokeEnabled;
+  strokeCheckbox.addEventListener("change", () => {
+    item.strokeEnabled = strokeCheckbox.checked;
+    renderCanvas();
+  });
+
+  strokeToggle.appendChild(strokeCheckbox);
+  strokeToggle.appendChild(document.createTextNode(" 외곽선"));
+
+  const strokeColorInput = document.createElement("input");
+  strokeColorInput.type = "color";
+  strokeColorInput.className = "field-color-input";
+  strokeColorInput.title = "외곽선 색상";
+  strokeColorInput.value = normalizeColorForPicker(item.strokeColor);
+  strokeColorInput.addEventListener("input", () => {
+    item.strokeColor = strokeColorInput.value;
+    renderCanvas();
+  });
+
+  strokeRow.appendChild(strokeToggle);
+  strokeRow.appendChild(strokeColorInput);
+  body.appendChild(strokeRow);
+
   card.appendChild(body);
   return card;
 }
@@ -1617,6 +1681,8 @@ function addCustomTextItem() {
     placeholder: "새 텍스트",
     enabled: true,
     isCustom: true,
+    strokeEnabled: false,
+    strokeColor: "#000000",
   };
 
   data.textItems.push(item);
@@ -1653,12 +1719,34 @@ function downloadBlob(blob, filename) {
 const exportSideBtn = document.getElementById("exportSideBtn");
 const exportBothBtn = document.getElementById("exportBothBtn");
 
+// toBlob이 실패하면(캔버스 오염 등) blob이 null로 오거나 예외가 나는데, 그동안은
+// 아무 反응 없이 조용히 실패해서 원인을 알기 어려웠다. 실패를 화면에 드러내 준다.
+function exportCanvasToBlob(onSuccess) {
+  try {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        alert(
+          "PNG 저장에 실패했습니다.\n\n" +
+            "브라우저 콘솔(F12)에 에러가 있는지 확인해주세요. " +
+            "index.html을 파일 탐색기에서 더블클릭해 직접 열었다면(file:// 주소), " +
+            "웹 서버로 열거나(GitHub Pages 등) 실제 https 주소에서 다시 시도해보세요."
+        );
+        return;
+      }
+      onSuccess(blob);
+    }, "image/png");
+  } catch (err) {
+    console.error(err);
+    alert(`PNG 저장 중 오류가 발생했습니다: ${err.message}`);
+  }
+}
+
 exportSideBtn.addEventListener("click", () => {
   renderCanvas({ forExport: true });
-  canvas.toBlob((blob) => {
+  exportCanvasToBlob((blob) => {
     downloadBlob(blob, `ticket-${state.activeTemplateId}-${state.activeSide}.png`);
     renderCanvas();
-  }, "image/png");
+  });
 });
 
 exportBothBtn.addEventListener("click", async () => {
@@ -1667,10 +1755,13 @@ exportBothBtn.addEventListener("click", async () => {
     state.activeSide = side;
     renderCanvas({ forExport: true });
     await new Promise((resolve) => {
-      canvas.toBlob((blob) => {
+      exportCanvasToBlob((blob) => {
         downloadBlob(blob, `ticket-${state.activeTemplateId}-${side}.png`);
         resolve();
-      }, "image/png");
+      });
+      // exportCanvasToBlob이 실패 알림만 띄우고 끝나는 경우에도 다음 단계로 진행되도록
+      // 실패 시에도 짧은 지연 후 resolve한다.
+      setTimeout(resolve, 3000);
     });
   }
   state.activeSide = originalSide;
