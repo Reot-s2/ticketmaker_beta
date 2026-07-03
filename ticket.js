@@ -4,16 +4,16 @@
    상업적 이용 가능한 폰트 목록 (전부 상업적 이용 가능한 웹폰트)
    ===================================================================== */
 const FONT_OPTIONS = [
-  { label: "Georgia (기본 세리프)", family: "Georgia, 'Times New Roman', serif" },
-  { label: "Playfair Display (우아한 세리프)", family: "'Playfair Display', Georgia, serif" },
-  { label: "Bebas Neue (굵은 포스터체)", family: "'Bebas Neue', sans-serif" },
-  { label: "Dancing Script (손글씨 스크립트)", family: "'Dancing Script', cursive" },
-  { label: "나눔명조 (한글 세리프)", family: "'Nanum Myeongjo', serif" },
-  { label: "고운돋움 (한글 산세리프)", family: "'Gowun Dodum', sans-serif" },
-  { label: "프리텐다드 (반듯한 산세리프)", family: "'Pretendard', sans-serif" },
-  { label: "명이 Black (귀여운 두꺼운 고딕)", family: "'Cafe24MeongiBlack', sans-serif" },
-  { label: "던파 비트비트체 (픽셀 느낌)", family: "'DnfBitbeatV2', sans-serif" },
-  { label: "온글잎 박다현체 (손글씨)", family: "'OngleipParkDahyeon', cursive" },
+  { label: "Georgia", family: "Georgia, 'Times New Roman', serif" },
+  { label: "Playfair Display", family: "'Playfair Display', Georgia, serif" },
+  { label: "Bebas Neue", family: "'Bebas Neue', sans-serif" },
+  { label: "Dancing Script", family: "'Dancing Script', cursive" },
+  { label: "나눔명조", family: "'Nanum Myeongjo', serif" },
+  { label: "고운돋움", family: "'Gowun Dodum', sans-serif" },
+  { label: "프리텐다드", family: "'Pretendard', sans-serif" },
+  { label: "Meongi Black (only English)", family: "'Cafe24MeongiBlack', sans-serif" },
+  { label: "던파 비트비트체v2", family: "'DnfBitbeatV2', sans-serif" },
+  { label: "온글잎 박다현체", family: "'OngleipParkDahyeon', cursive" },
 ];
 
 /* =====================================================================
@@ -40,8 +40,8 @@ const TEMPLATES = [
     },
     front: {
       fields: [
-        { key: "overline", label: "상단 태그 (투어명 등)", type: "text", x: 240, y: 110, align: "center", fontWeight: 600, fontSize: 17, maxWidth: 420, placeholder: "MY MOVIE TOUR" },
-        { key: "subtitle", label: "부제 (도시 · 장소 등)", type: "text", x: 240, y: 655, align: "center", fontWeight: 600, fontSize: 20, maxWidth: 420, placeholder: "CITY" },
+        { key: "overline", label: "상단 태그", type: "text", x: 240, y: 110, align: "center", fontWeight: 600, fontSize: 17, maxWidth: 420, placeholder: "MY MOVIE TICKET" },
+        { key: "subtitle", label: "서브 타이틀", type: "text", x: 240, y: 655, align: "center", fontWeight: 600, fontSize: 20, maxWidth: 420, placeholder: "Subtitle" },
         { key: "mainTitle", label: "메인 타이틀", type: "text", x: 240, y: 725, align: "center", fontStyle: "italic", fontWeight: 700, fontSize: 50, maxWidth: 440, placeholder: "MOVIE TITLE" },
       ],
     },
@@ -58,7 +58,7 @@ const TEMPLATES = [
         { key: "venue", label: "장소", type: "text", x: 40, y: 305, align: "left", fontSize: 15, maxWidth: 400, placeholder: "VENUE" },
         { key: "cast", label: "캐스트 / 출연진", type: "multiline", x: 40, y: 340, maxWidth: 400, fontSize: 15, lineHeight: 22, align: "left", placeholder: "CAST NAMES" },
         { key: "rating", label: "별점", type: "rating", x: 40, y: 460, fontSize: 26, align: "left" },
-        { key: "review", label: "한줄 리뷰", type: "multiline", x: 40, y: 545, maxWidth: 400, fontStyle: "italic", fontSize: 16, lineHeight: 26, align: "left", placeholder: "남기고 싶은 한마디를 적어보세요" },
+        { key: "review", label: "코멘트", type: "multiline", x: 40, y: 545, maxWidth: 400, fontStyle: "italic", fontSize: 16, lineHeight: 26, align: "left", placeholder: "짧은 감상평을 적어보세요." },
       ],
     },
   },
@@ -79,8 +79,8 @@ const TEMPLATES = [
     },
     front: {
       fields: [
-        { key: "title", label: "타이틀", type: "text", x: 380, y: 210, align: "center", fontStyle: "italic", fontWeight: 700, fontSize: 34, maxWidth: 600, placeholder: "INTO THE SPRING" },
-        { key: "subtitle", label: "한줄 소개", type: "text", x: 380, y: 248, align: "center", fontStyle: "italic", fontSize: 17, maxWidth: 600, placeholder: "소소한 하루의 기록" },
+        { key: "title", label: "메인 타이틀", type: "text", x: 380, y: 210, align: "center", fontStyle: "italic", fontWeight: 700, fontSize: 34, maxWidth: 600, placeholder: "MOVIE TITLE" },
+        { key: "subtitle", label: "서브 타이틀", type: "text", x: 380, y: 248, align: "center", fontStyle: "italic", fontSize: 17, maxWidth: 600, placeholder: "SUBTITLE" },
       ],
     },
     back: {
@@ -96,12 +96,12 @@ const TEMPLATES = [
       ],
       fields: [
         { key: "label", label: "상단 라벨", type: "text", x: 30, y: 50, align: "left", fontWeight: 700, fontSize: 12, maxWidth: 300, placeholder: "ORIGINAL TICKET", default: "ORIGINAL TICKET" },
-        { key: "no", label: "번호", type: "text", x: 730, y: 50, align: "right", fontSize: 12, maxWidth: 150, placeholder: "NO. 01" },
+        { key: "no", label: "번호", type: "text", x: 730, y: 50, align: "right", fontSize: 12, maxWidth: 150, placeholder: "No. 01" },
         { key: "title", label: "타이틀", type: "text", x: 30, y: 112, align: "left", fontStyle: "italic", fontWeight: 700, fontSize: 32, maxWidth: 700, placeholder: "Title" },
         { key: "date", label: "날짜", type: "text", x: 30, y: 165, align: "left", fontSize: 13, maxWidth: 300, placeholder: "2026.00.00", isDateField: true },
         { key: "cast", label: "캐스트", type: "text", x: 30, y: 190, align: "left", fontSize: 13, maxWidth: 700, placeholder: "CAST" },
         { key: "rating", label: "별점", type: "rating", x: 30, y: 232, fontSize: 22, align: "left" },
-        { key: "comment", label: "코멘트", type: "multiline", x: 30, y: 300, maxWidth: 700, fontSize: 14, lineHeight: 22, align: "left", placeholder: "짧은 코멘트를 남겨보세요." },
+        { key: "comment", label: "코멘트", type: "multiline", x: 30, y: 300, maxWidth: 700, fontSize: 14, lineHeight: 22, align: "left", placeholder: "짧은 감상평을 적어보세요." },
       ],
     },
   },
@@ -120,7 +120,7 @@ const TEMPLATES = [
       placeholderColor: "rgba(34,34,34,0.3)",
     },
     front: {
-      fields: [{ key: "title", label: "타이틀", type: "text", x: 30, y: 70, align: "left", fontStyle: "italic", fontWeight: 700, fontSize: 46, maxWidth: 320, placeholder: "Story" }],
+      fields: [{ key: "title", label: "메인 타이틀", type: "text", x: 30, y: 70, align: "left", fontStyle: "italic", fontWeight: 700, fontSize: 46, maxWidth: 320, placeholder: "MOVIE TITLE" }],
     },
     back: {
       decorations: [
@@ -128,13 +128,11 @@ const TEMPLATES = [
         { type: "line", x1: 30, y1: 380, x2: 450, y2: 380, color: "rgba(34,34,34,0.3)" },
       ],
       fields: [
-        { key: "album", label: "앨범/작품명", type: "text", x: 30, y: 60, align: "left", fontStyle: "italic", fontWeight: 700, fontSize: 32, maxWidth: 420, placeholder: "Album" },
-        { key: "release", label: "발매/공개일", type: "text", x: 30, y: 130, align: "left", fontSize: 13, maxWidth: 420, placeholder: "2026.00.00", isDateField: true },
-        { key: "artist", label: "아티스트", type: "text", x: 30, y: 155, align: "left", fontSize: 13, maxWidth: 420, placeholder: "Artist" },
-        { key: "title2", label: "곡/에피소드 제목", type: "text", x: 30, y: 180, align: "left", fontSize: 13, maxWidth: 420, placeholder: "Title" },
-        { key: "tracklist", label: "트랙리스트 / 목록", type: "multiline", x: 30, y: 215, maxWidth: 420, fontSize: 12, lineHeight: 17, align: "left", placeholder: "01. Track name\n02. Track name" },
+        { key: "album", label: "메인 타이틀", type: "text", x: 30, y: 60, align: "left", fontStyle: "italic", fontWeight: 700, fontSize: 32, maxWidth: 420, placeholder: "MOVIE TITLE" },
+        { key: "release", label: "날짜", type: "text", x: 30, y: 130, align: "left", fontSize: 13, maxWidth: 420, placeholder: "2026.00.00", isDateField: true },
+        { key: "artist", label: "캐스트", type: "text", x: 30, y: 155, align: "left", fontSize: 13, maxWidth: 420, placeholder: "Cast" },
         { key: "rating", label: "별점", type: "rating", x: 30, y: 400, fontSize: 20, align: "left" },
-        { key: "review", label: "한줄 감상평", type: "text", x: 30, y: 435, align: "left", fontStyle: "italic", fontSize: 13, maxWidth: 420, placeholder: "짧은 감상평을 적어보세요" },
+        { key: "review", label: "코멘트", type: "text", x: 30, y: 435, align: "left", fontStyle: "italic", fontSize: 13, maxWidth: 420, placeholder: "짧은 감상평을 적어보세요." },
       ],
     },
   },
