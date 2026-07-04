@@ -40,6 +40,14 @@
           </div>
         </div>
 
+        <div class="tm-section">
+          <h2 class="tm-heading">티켓 배경색</h2>
+          <div class="bg-color-row">
+            <input type="color" id="bgColorInput" class="field-color-input" title="배경색" />
+            <button type="button" class="field-reset-btn" id="bgColorResetBtn" title="기본색으로 되돌리기">⟲</button>
+          </div>
+        </div>
+
         <div class="tm-section" id="dividerSection" hidden>
           <h2 class="tm-heading">구분선 방향</h2>
           <div class="side-toggle">
@@ -83,9 +91,12 @@
           <canvas id="ticketCanvas"></canvas>
         </div>
         <div class="tm-toolbar">
+          <button type="button" class="tm-btn" id="undoBtn" disabled title="실행취소 (Ctrl+Z)">↶ 실행취소</button>
+          <button type="button" class="tm-btn" id="redoBtn" disabled title="다시실행 (Ctrl+Shift+Z)">↷ 다시실행</button>
           <button type="button" class="tm-btn" id="deleteLayerBtn" disabled>선택 항목 삭제</button>
           <button type="button" class="tm-btn tm-btn-primary" id="exportSideBtn">현재 면 PNG 저장</button>
           <button type="button" class="tm-btn tm-btn-primary" id="exportBothBtn">앞뒤 모두 저장</button>
+          <button type="button" class="tm-btn tm-btn-primary" id="exportCombinedBtn">앞뒤 합쳐서 저장</button>
         </div>
       </section>
 

@@ -146,6 +146,9 @@ const state = {
   activeSide: "front",
   // data[templateId][side] = { layers: [...], textItems: [...] }
   data: {},
+  // bgOverride["템플릿id:side"] = "#rrggbb" (사용자가 배경색을 직접 바꾼 경우, 템플릿 기본 배경 대신 사용)
+  // 앞면/뒷면이 서로 다른 배경색을 가질 수 있도록 면(side)까지 포함한 키를 쓴다.
+  bgOverride: {},
 };
 
 // 현재 선택된 항목: { type: "layer" | "text", id } 또는 null
@@ -181,6 +184,9 @@ function createTextItemFromField(field) {
     useTodayDate: false,
     strokeEnabled: !!field.strokeEnabled,
     strokeColor: field.strokeColor || "#000000",
+    gradientEnabled: !!field.gradientEnabled,
+    gradientColor1: field.gradientColor1 || "#ffffff",
+    gradientColor2: field.gradientColor2 || "#000000",
   };
 }
 
@@ -196,6 +202,120 @@ function ensureSideState(templateId, side) {
 
 function getSideState() {
   return ensureSideState(state.activeTemplateId, state.activeSide);
+}
+
+/* =====================================================================
+   실행취소 / 다시실행 히스토리
+   - 매 편집 동작 전에 전체 상태(state)를 깊은 복사해 undo 스택에 쌓아 둔다.
+   - img(HTMLImageElement)는 그대로 참조를 공유한다 (다시 로드할 필요가 없고,
+     불변으로 취급해도 문제없다). 나머지 값(x/y/크기/텍스트/색상 등)만 복사한다.
+   - 드래그·타이핑·슬라이더처럼 한 동작 안에서 이벤트가 연속으로 발생하는
+     경우에는 pushHistoryOnce()로 제스처마다 한 번만 기록해서, 되돌리기 한 번에
+     그 동작 전체가 취소되게 한다.
+   ===================================================================== */
+let undoStack = [];
+let redoStack = [];
+const MAX_HISTORY = 60;
+let historyGestureActive = false;
+
+function cloneLayerForHistory(layer) {
+  return { ...layer, effects: layer.effects ? { ...layer.effects } : createDefaultEffects() };
+}
+
+function cloneTextItemForHistory(item) {
+  const clone = { ...item };
+  delete clone._bbox;
+  return clone;
+}
+
+function cloneSideDataForHistory(data) {
+  return {
+    layers: data.layers.map(cloneLayerForHistory),
+    textItems: data.textItems.map(cloneTextItemForHistory),
+    dividerOrientation: data.dividerOrientation,
+  };
+}
+
+function snapshotState() {
+  const dataClone = {};
+  Object.keys(state.data).forEach((tplId) => {
+    dataClone[tplId] = {};
+    Object.keys(state.data[tplId]).forEach((side) => {
+      dataClone[tplId][side] = cloneSideDataForHistory(state.data[tplId][side]);
+    });
+  });
+  return {
+    activeTemplateId: state.activeTemplateId,
+    activeSide: state.activeSide,
+    bgOverride: { ...state.bgOverride },
+    data: dataClone,
+  };
+}
+
+function restoreSnapshot(snap) {
+  state.activeTemplateId = snap.activeTemplateId;
+  state.activeSide = snap.activeSide;
+  state.bgOverride = { ...snap.bgOverride };
+  const dataClone = {};
+  Object.keys(snap.data).forEach((tplId) => {
+    dataClone[tplId] = {};
+    Object.keys(snap.data[tplId]).forEach((side) => {
+      dataClone[tplId][side] = cloneSideDataForHistory(snap.data[tplId][side]);
+    });
+  });
+  state.data = dataClone;
+  selected = null;
+  editingItemId = null;
+
+  renderTemplateList();
+  renderSideButtons();
+  renderBgColorSection();
+  renderFieldsPanel();
+  renderLayerList();
+  updateDeleteButtonState();
+  renderDividerSection();
+  renderCanvas();
+}
+
+function updateUndoRedoButtons() {
+  undoBtn.disabled = undoStack.length === 0;
+  redoBtn.disabled = redoStack.length === 0;
+}
+
+function pushHistory() {
+  undoStack.push(snapshotState());
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  redoStack = [];
+  updateUndoRedoButtons();
+}
+
+// 드래그/타이핑/슬라이더 등 연속 이벤트 제스처의 "시작 시점"에 한 번만 기록한다.
+function pushHistoryOnce() {
+  if (historyGestureActive) return;
+  historyGestureActive = true;
+  pushHistory();
+}
+
+function endHistoryGesture() {
+  historyGestureActive = false;
+}
+
+function performUndo() {
+  if (!undoStack.length) return;
+  const current = snapshotState();
+  const prev = undoStack.pop();
+  redoStack.push(current);
+  restoreSnapshot(prev);
+  updateUndoRedoButtons();
+}
+
+function performRedo() {
+  if (!redoStack.length) return;
+  const current = snapshotState();
+  const next = redoStack.pop();
+  undoStack.push(current);
+  restoreSnapshot(next);
+  updateUndoRedoButtons();
 }
 
 /* =====================================================================
@@ -329,7 +449,23 @@ const canvas = document.getElementById("ticketCanvas");
 const ctx = canvas.getContext("2d");
 const canvasWrap = document.querySelector(".tm-canvas-wrap");
 
+const undoBtn = document.getElementById("undoBtn");
+const redoBtn = document.getElementById("redoBtn");
+undoBtn.addEventListener("click", performUndo);
+redoBtn.addEventListener("click", performRedo);
+
+// 템플릿+면(front/back) 조합별로 배경색 오버라이드를 구분해서 저장하기 위한 키.
+function bgOverrideKey(tplId, side) {
+  return `${tplId}:${side}`;
+}
+
 function drawTemplateBackground(tpl) {
+  const override = state.bgOverride[bgOverrideKey(tpl.id, state.activeSide)];
+  if (override) {
+    ctx.fillStyle = override;
+    ctx.fillRect(0, 0, tpl.width, tpl.height);
+    return;
+  }
   if (tpl.colors.bgTop && tpl.colors.bgBottom) {
     const grad = ctx.createLinearGradient(0, 0, 0, tpl.height);
     grad.addColorStop(0, tpl.colors.bgTop);
@@ -417,34 +553,58 @@ function drawTextCursor(item, lineText, lineY) {
 }
 
 // 외곽선 색상으로 은은하게 번지는 블러(후광) 효과를 그리고, 그 위에 본문 글자를 얹는다.
+// 별도의 오프스크린 캔버스에 "본문과 완전히 같은 좌표·폰트"로 글자를 그린 뒤 blur 필터로
+// 흐릿하게 합성한다. (이전에는 그림자를 아주 멀리(10000px) 옮겼다가 offset으로 되돌리는
+// 방식이었는데, 그 과정에서 서브픽셀 위치가 달라져 후광의 글자가 본문과 미묘하게 다른
+// 폰트/굵기로 보이는 문제가 있었다. 같은 좌표에 직접 그리면 이 문제가 없다.)
+const glowCanvas = document.createElement("canvas");
+const glowCtx = glowCanvas.getContext("2d");
+
+function drawGlowLayer(text, x, y, color, blurPx) {
+  if (glowCanvas.width !== canvas.width || glowCanvas.height !== canvas.height) {
+    glowCanvas.width = canvas.width;
+    glowCanvas.height = canvas.height;
+  }
+  glowCtx.clearRect(0, 0, glowCanvas.width, glowCanvas.height);
+  glowCtx.save();
+  glowCtx.setTransform(ctx.getTransform());
+  glowCtx.font = ctx.font;
+  glowCtx.textAlign = ctx.textAlign;
+  glowCtx.textBaseline = ctx.textBaseline;
+  glowCtx.fillStyle = color;
+  glowCtx.filter = `blur(${blurPx}px)`;
+  glowCtx.fillText(text, x, y);
+  glowCtx.restore();
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(glowCanvas, 0, 0);
+  ctx.restore();
+}
+
 function fillTextWithStroke(item, text, x, y) {
   if (item.strokeEnabled) {
     const strokeColor = item.strokeColor || "#000000";
-
-    ctx.save();
-    
-    // 외곽선 색상을 그림자 색상으로 온전하게 지정
-    ctx.shadowColor = strokeColor;
-    
-    // 본체 글자는 화면 밖(멀리)에 대피시켜서 숨기고, 그림자만 원래 좌표(x, y)에 맺히게 만드는 편법
-    // 이렇게 하면 본체의 딱딱한 선이나 색상은 완벽히 숨고, '외곽선 색상의 그림자'만 원하는 위치에 남는다.
-    const offset = 10000; 
-    ctx.shadowOffsetX = offset;
-    ctx.shadowOffsetY = 0;
-
-    // 바깥 레이어: 넓고 은은하게 퍼지는 큰 블러 (원래 x에서 offset만큼 빼서 그려줌)
-    ctx.shadowBlur = Math.max(8, Math.round(item.fontSize * 0.4));
-    ctx.fillText(text, x - offset, y);
-
+    // 바깥 레이어: 넓고 은은하게 퍼지는 큰 블러
+    drawGlowLayer(text, x, y, strokeColor, Math.max(6, Math.round(item.fontSize * 0.35)));
     // 안쪽 레이어: 조금 더 또렷하게 잡아주는 좁은 블러
-    ctx.shadowBlur = Math.max(2, Math.round(item.fontSize * 0.15));
-    ctx.fillText(text, x - offset, y);
-
-    ctx.restore();
+    drawGlowLayer(text, x, y, strokeColor, Math.max(2, Math.round(item.fontSize * 0.12)));
   }
-  
+
   // 최종 본문 글자 채우기
   ctx.fillText(text, x, y);
+}
+
+// 그라데이션이 켜진 텍스트 항목의 채우기 스타일을 만든다.
+// _bbox는 drawAllTextItems에서 그리기 직전에 항상 새로 계산해 두므로 여기서 바로 쓸 수 있다.
+function createTextGradient(item) {
+  const bbox = item._bbox;
+  const y0 = bbox ? bbox.y : item.y - item.fontSize;
+  const y1 = bbox ? bbox.y + bbox.h : item.y + item.fontSize * 0.3;
+  const grad = ctx.createLinearGradient(0, y0, 0, y1);
+  grad.addColorStop(0, item.gradientColor1 || "#ffffff");
+  grad.addColorStop(1, item.gradientColor2 || "#000000");
+  return grad;
 }
 
 function drawTextItem(item, tpl) {
@@ -453,7 +613,7 @@ function drawTextItem(item, tpl) {
   if (item.type === "rating") {
     const rating = Number(item.text) || 0;
     ctx.font = composeFont(item);
-    ctx.fillStyle = item.color || tpl.colors.textPrimary;
+    ctx.fillStyle = item.gradientEnabled ? createTextGradient(item) : item.color || tpl.colors.textPrimary;
     ctx.textAlign = item.align || "left";
     ctx.textBaseline = "alphabetic";
     let stars = "";
@@ -468,7 +628,11 @@ function drawTextItem(item, tpl) {
   if (!displayText && !isEditing) return;
 
   ctx.font = composeFont(item);
-  ctx.fillStyle = isPlaceholder ? tpl.colors.placeholderColor : item.color || tpl.colors.textPrimary;
+  ctx.fillStyle = item.gradientEnabled
+    ? createTextGradient(item)
+    : isPlaceholder
+    ? tpl.colors.placeholderColor
+    : item.color || tpl.colors.textPrimary;
   ctx.textAlign = item.align || "left";
   ctx.textBaseline = "alphabetic";
 
@@ -983,6 +1147,7 @@ function startInlineTextEdit(item) {
   inputEl.select();
 
   function syncFromInput() {
+    pushHistoryOnce();
     item.text = inputEl.value;
     renderCanvas();
   }
@@ -990,6 +1155,7 @@ function startInlineTextEdit(item) {
   function stopEditing() {
     if (editingItemId !== item.id) return;
     editingItemId = null;
+    endHistoryGesture();
     if (cursorBlinkTimer) {
       clearInterval(cursorBlinkTimer);
       cursorBlinkTimer = null;
@@ -1022,6 +1188,7 @@ function startInlineTextEdit(item) {
 
 window.addEventListener("mousemove", (e) => {
   if (!dragMode || !selected) return;
+  pushHistoryOnce();
   const pt = getCanvasPoint(e);
   const dx = pt.x - dragStartPoint.x;
   const dy = pt.y - dragStartPoint.y;
@@ -1052,6 +1219,7 @@ window.addEventListener("mousemove", (e) => {
 window.addEventListener("mouseup", () => {
   dragMode = null;
   resizeHandle = null;
+  endHistoryGesture();
 });
 
 document.addEventListener("keydown", (e) => {
@@ -1060,6 +1228,15 @@ document.addEventListener("keydown", (e) => {
   if ((e.key === "Delete" || e.key === "Backspace") && selected) {
     e.preventDefault();
     deleteSelected();
+    return;
+  }
+  const key = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && key === "z") {
+    e.preventDefault();
+    performUndo();
+  } else if ((e.ctrlKey || e.metaKey) && ((e.shiftKey && key === "z") || key === "y")) {
+    e.preventDefault();
+    performRedo();
   }
 });
 
@@ -1167,6 +1344,7 @@ function renderLayerEffectsPanel() {
 effectGrayscaleInput.addEventListener("change", () => {
   const layer = getSelectedLayer();
   if (!layer) return;
+  pushHistory();
   layer.effects.grayscale = effectGrayscaleInput.checked;
   renderCanvas();
 });
@@ -1174,13 +1352,16 @@ effectGrayscaleInput.addEventListener("change", () => {
 effectBlurInput.addEventListener("input", () => {
   const layer = getSelectedLayer();
   if (!layer) return;
+  pushHistoryOnce();
   layer.effects.blur = Number(effectBlurInput.value) || 0;
   renderCanvas();
 });
+effectBlurInput.addEventListener("change", endHistoryGesture);
 
 effectGradientInput.addEventListener("change", () => {
   const layer = getSelectedLayer();
   if (!layer) return;
+  pushHistory();
   layer.effects.gradient = effectGradientInput.value;
   renderCanvas();
 });
@@ -1190,6 +1371,7 @@ function moveLayerStep(id, dir) {
   const idx = layers.findIndex((l) => l.id === id);
   const newIdx = idx + dir;
   if (newIdx < 0 || newIdx >= layers.length) return;
+  pushHistory();
   [layers[idx], layers[newIdx]] = [layers[newIdx], layers[idx]];
   renderLayerList();
   renderCanvas();
@@ -1198,7 +1380,9 @@ function moveLayerStep(id, dir) {
 function deleteLayer(id) {
   const layers = getSideState().layers;
   const idx = layers.findIndex((l) => l.id === id);
-  if (idx >= 0) layers.splice(idx, 1);
+  if (idx < 0) return;
+  pushHistory();
+  layers.splice(idx, 1);
   if (selected && selected.type === "layer" && selected.id === id) selected = null;
   updateDeleteButtonState();
   renderLayerList();
@@ -1220,6 +1404,7 @@ function deleteSelected() {
     removeCustomTextItem(item.id);
   } else {
     // 템플릿 기본 항목은 완전히 지우는 대신 꺼짐 상태로 되돌린다.
+    pushHistory();
     item.enabled = false;
     selected = null;
     updateDeleteButtonState();
@@ -1255,6 +1440,7 @@ copyOtherSideBtn.addEventListener("click", () => {
   const otherData = ensureSideState(state.activeTemplateId, otherSide);
   if (otherData.layers.length === 0) return;
 
+  pushHistory();
   const currentData = getSideState();
   const cloned = otherData.layers.map((l) => ({
     ...l,
@@ -1299,6 +1485,7 @@ function addImageLayerFromFile(file) {
         rotation: 0,
         effects: createDefaultEffects(),
       };
+      pushHistory();
       sideState.layers.push(layer);
       selected = { type: "layer", id: layer.id };
       afterSelectionChange();
@@ -1348,6 +1535,7 @@ function selectTemplate(id) {
   selected = null;
   renderTemplateList();
   renderSideButtons();
+  renderBgColorSection();
   renderFieldsPanel();
   renderLayerList();
   updateDeleteButtonState();
@@ -1364,12 +1552,40 @@ function selectSide(side) {
   state.activeSide = side;
   selected = null;
   renderSideButtons();
+  renderBgColorSection();
   renderFieldsPanel();
   renderLayerList();
   updateDeleteButtonState();
   renderDividerSection();
   renderCanvas();
 }
+
+/* ---------- 티켓 배경색 (템플릿 + 면(앞/뒤)별로 각각 다르게 설정 가능) ---------- */
+const bgColorInput = document.getElementById("bgColorInput");
+const bgColorResetBtn = document.getElementById("bgColorResetBtn");
+
+function renderBgColorSection() {
+  const tpl = getActiveTemplate();
+  const fallback = tpl.colors.bg || tpl.colors.bgTop;
+  const key = bgOverrideKey(tpl.id, state.activeSide);
+  bgColorInput.value = normalizeColorForPicker(state.bgOverride[key] || fallback);
+}
+
+bgColorInput.addEventListener("input", () => {
+  pushHistoryOnce();
+  const tpl = getActiveTemplate();
+  state.bgOverride[bgOverrideKey(tpl.id, state.activeSide)] = bgColorInput.value;
+  renderCanvas();
+});
+bgColorInput.addEventListener("change", endHistoryGesture);
+
+bgColorResetBtn.addEventListener("click", () => {
+  pushHistory();
+  const tpl = getActiveTemplate();
+  delete state.bgOverride[bgOverrideKey(tpl.id, state.activeSide)];
+  renderBgColorSection();
+  renderCanvas();
+});
 
 /* ---------- 구분선 방향 (파스텔 필름 뒷면 전용) ---------- */
 const dividerSectionEl = document.getElementById("dividerSection");
@@ -1394,6 +1610,7 @@ function renderDividerSection() {
 }
 
 function setDividerOrientation(orientation) {
+  pushHistory();
   getSideState().dividerOrientation = orientation;
   renderDividerSection();
   renderCanvas();
@@ -1443,6 +1660,7 @@ const bulkColorInput = document.getElementById("bulkColorInput");
 const bulkColorApplyBtn = document.getElementById("bulkColorApplyBtn");
 
 bulkColorApplyBtn.addEventListener("click", () => {
+  pushHistory();
   const data = getSideState();
   data.textItems.forEach((item) => {
     item.color = bulkColorInput.value;
@@ -1465,6 +1683,7 @@ function buildFieldCard(item, tpl) {
   checkbox.type = "checkbox";
   checkbox.checked = item.enabled;
   checkbox.addEventListener("change", () => {
+    pushHistory();
     item.enabled = checkbox.checked;
     card.classList.toggle("field-disabled", !item.enabled);
     if (!item.enabled && selected && selected.type === "text" && selected.id === item.id) {
@@ -1490,6 +1709,7 @@ function buildFieldCard(item, tpl) {
   resetPosBtn.title = "위치 초기화";
   resetPosBtn.textContent = "⟲";
   resetPosBtn.addEventListener("click", () => {
+    pushHistory();
     item.x = item.defaultX;
     item.y = item.defaultY;
     renderCanvas();
@@ -1521,6 +1741,7 @@ function buildFieldCard(item, tpl) {
       starBtn.className = "rating-star-btn";
       starBtn.textContent = i <= (Number(item.text) || 0) ? "★" : "☆";
       starBtn.addEventListener("click", () => {
+        pushHistory();
         item.text = String(i);
         renderFieldsPanel();
         renderCanvas();
@@ -1534,9 +1755,11 @@ function buildFieldCard(item, tpl) {
     textarea.value = item.text || "";
     textarea.placeholder = item.placeholder || "";
     textarea.addEventListener("input", () => {
+      pushHistoryOnce();
       item.text = textarea.value;
       renderCanvas();
     });
+    textarea.addEventListener("blur", endHistoryGesture);
     body.appendChild(textarea);
   } else {
     const input = document.createElement("input");
@@ -1545,9 +1768,11 @@ function buildFieldCard(item, tpl) {
     input.placeholder = item.placeholder || "";
     input.disabled = !!item.useTodayDate;
     input.addEventListener("input", () => {
+      pushHistoryOnce();
       item.text = input.value;
       renderCanvas();
     });
+    input.addEventListener("blur", endHistoryGesture);
 
     if (item.isDateField) {
       const dateToggle = document.createElement("label");
@@ -1556,6 +1781,7 @@ function buildFieldCard(item, tpl) {
       dateCheckbox.type = "checkbox";
       dateCheckbox.checked = !!item.useTodayDate;
       dateCheckbox.addEventListener("change", () => {
+        pushHistory();
         item.useTodayDate = dateCheckbox.checked;
         input.disabled = item.useTodayDate;
         if (item.useTodayDate) {
@@ -1585,6 +1811,7 @@ function buildFieldCard(item, tpl) {
     fontSelect.appendChild(optionEl);
   });
   fontSelect.addEventListener("change", () => {
+    pushHistory();
     item.fontFamily = fontSelect.value;
     renderCanvas();
   });
@@ -1599,10 +1826,12 @@ function buildFieldCard(item, tpl) {
   sizeInput.addEventListener("input", () => {
     const v = parseInt(sizeInput.value, 10);
     if (!Number.isNaN(v) && v > 0) {
+      pushHistoryOnce();
       item.fontSize = v;
       renderCanvas();
     }
   });
+  sizeInput.addEventListener("blur", endHistoryGesture);
 
   const colorInput = document.createElement("input");
   colorInput.type = "color";
@@ -1610,9 +1839,11 @@ function buildFieldCard(item, tpl) {
   colorInput.title = "글자 색상";
   colorInput.value = normalizeColorForPicker(item.color || tpl.colors.textPrimary);
   colorInput.addEventListener("input", () => {
+    pushHistoryOnce();
     item.color = colorInput.value;
     renderCanvas();
   });
+  colorInput.addEventListener("change", endHistoryGesture);
 
   styleRow.appendChild(fontSelect);
   styleRow.appendChild(sizeInput);
@@ -1629,6 +1860,7 @@ function buildFieldCard(item, tpl) {
   strokeCheckbox.type = "checkbox";
   strokeCheckbox.checked = !!item.strokeEnabled;
   strokeCheckbox.addEventListener("change", () => {
+    pushHistory();
     item.strokeEnabled = strokeCheckbox.checked;
     renderCanvas();
   });
@@ -1642,19 +1874,74 @@ function buildFieldCard(item, tpl) {
   strokeColorInput.title = "외곽선 색상";
   strokeColorInput.value = normalizeColorForPicker(item.strokeColor);
   strokeColorInput.addEventListener("input", () => {
+    pushHistoryOnce();
     item.strokeColor = strokeColorInput.value;
     renderCanvas();
   });
+  strokeColorInput.addEventListener("change", endHistoryGesture);
 
   strokeRow.appendChild(strokeToggle);
   strokeRow.appendChild(strokeColorInput);
   body.appendChild(strokeRow);
+
+  const gradientRow = document.createElement("div");
+  gradientRow.className = "field-gradient-row";
+
+  const gradientToggle = document.createElement("label");
+  gradientToggle.className = "field-gradient-toggle";
+
+  const gradientCheckbox = document.createElement("input");
+  gradientCheckbox.type = "checkbox";
+  gradientCheckbox.checked = !!item.gradientEnabled;
+  gradientCheckbox.addEventListener("change", () => {
+    pushHistory();
+    item.gradientEnabled = gradientCheckbox.checked;
+    renderCanvas();
+  });
+
+  gradientToggle.appendChild(gradientCheckbox);
+  gradientToggle.appendChild(document.createTextNode(" 그라데이션"));
+
+  const gradientColors = document.createElement("div");
+  gradientColors.className = "field-gradient-colors";
+
+  const gradientColor1Input = document.createElement("input");
+  gradientColor1Input.type = "color";
+  gradientColor1Input.className = "field-color-input";
+  gradientColor1Input.title = "그라데이션 색상 1";
+  gradientColor1Input.value = normalizeColorForPicker(item.gradientColor1);
+  gradientColor1Input.addEventListener("input", () => {
+    pushHistoryOnce();
+    item.gradientColor1 = gradientColor1Input.value;
+    renderCanvas();
+  });
+  gradientColor1Input.addEventListener("change", endHistoryGesture);
+
+  const gradientColor2Input = document.createElement("input");
+  gradientColor2Input.type = "color";
+  gradientColor2Input.className = "field-color-input";
+  gradientColor2Input.title = "그라데이션 색상 2";
+  gradientColor2Input.value = normalizeColorForPicker(item.gradientColor2);
+  gradientColor2Input.addEventListener("input", () => {
+    pushHistoryOnce();
+    item.gradientColor2 = gradientColor2Input.value;
+    renderCanvas();
+  });
+  gradientColor2Input.addEventListener("change", endHistoryGesture);
+
+  gradientColors.appendChild(gradientColor1Input);
+  gradientColors.appendChild(gradientColor2Input);
+
+  gradientRow.appendChild(gradientToggle);
+  gradientRow.appendChild(gradientColors);
+  body.appendChild(gradientRow);
 
   card.appendChild(body);
   return card;
 }
 
 function addCustomTextItem() {
+  pushHistory();
   const tpl = getActiveTemplate();
   const data = getSideState();
   const customCount = data.textItems.filter((i) => i.isCustom).length;
@@ -1683,6 +1970,9 @@ function addCustomTextItem() {
     isCustom: true,
     strokeEnabled: false,
     strokeColor: "#000000",
+    gradientEnabled: false,
+    gradientColor1: "#ffffff",
+    gradientColor2: "#000000",
   };
 
   data.textItems.push(item);
@@ -1695,7 +1985,9 @@ function addCustomTextItem() {
 function removeCustomTextItem(id) {
   const data = getSideState();
   const idx = data.textItems.findIndex((i) => i.id === id);
-  if (idx >= 0) data.textItems.splice(idx, 1);
+  if (idx < 0) return;
+  pushHistory();
+  data.textItems.splice(idx, 1);
   if (selected && selected.type === "text" && selected.id === id) selected = null;
   updateDeleteButtonState();
   renderFieldsPanel();
@@ -1718,6 +2010,7 @@ function downloadBlob(blob, filename) {
 
 const exportSideBtn = document.getElementById("exportSideBtn");
 const exportBothBtn = document.getElementById("exportBothBtn");
+const exportCombinedBtn = document.getElementById("exportCombinedBtn");
 
 // toBlob이 실패하면(캔버스 오염 등) blob이 null로 오거나 예외가 나는데, 그동안은
 // 아무 反응 없이 조용히 실패해서 원인을 알기 어려웠다. 실패를 화면에 드러내 준다.
@@ -1772,15 +2065,64 @@ exportBothBtn.addEventListener("click", async () => {
   renderCanvas();
 });
 
+// 지정한 면을 내보내기 그대로(투명 배경, 티켓 모양대로 클리핑) 그려서 별도의 작은
+// 캔버스에 복사해 돌려준다. 편집용 캔버스(margin 포함)를 건드리지 않고 앞/뒤를
+// 나란히 합치는 데 쓴다.
+function captureSideExportCanvas(side) {
+  const originalSide = state.activeSide;
+  state.activeSide = side;
+  renderCanvas({ forExport: true });
+  const tpl = getActiveTemplate();
+  const snap = document.createElement("canvas");
+  snap.width = tpl.width;
+  snap.height = tpl.height;
+  snap.getContext("2d").drawImage(canvas, 0, 0);
+  state.activeSide = originalSide;
+  return snap;
+}
+
+exportCombinedBtn.addEventListener("click", () => {
+  const tpl = getActiveTemplate();
+  const gap = 30;
+  const frontCanvas = captureSideExportCanvas("front");
+  const backCanvas = captureSideExportCanvas("back");
+
+  const combined = document.createElement("canvas");
+  combined.width = tpl.width * 2 + gap;
+  combined.height = tpl.height;
+  const combinedCtx = combined.getContext("2d");
+  combinedCtx.drawImage(frontCanvas, 0, 0);
+  combinedCtx.drawImage(backCanvas, tpl.width + gap, 0);
+
+  renderCanvas();
+
+  try {
+    combined.toBlob((blob) => {
+      if (!blob) {
+        alert(
+          "PNG 저장에 실패했습니다.\n\n브라우저 콘솔(F12)에 에러가 있는지 확인해주세요."
+        );
+        return;
+      }
+      downloadBlob(blob, `ticket-${state.activeTemplateId}-combined.png`);
+    }, "image/png");
+  } catch (err) {
+    console.error(err);
+    alert(`PNG 저장 중 오류가 발생했습니다: ${err.message}`);
+  }
+});
+
 /* =====================================================================
    초기화
    ===================================================================== */
 renderTemplateList();
 renderSideButtons();
+renderBgColorSection();
 renderFieldsPanel();
 renderLayerList();
 updateDeleteButtonState();
 renderDividerSection();
+updateUndoRedoButtons();
 renderCanvas();
 
 // 구글 폰트 로딩이 늦게 끝나는 경우를 대비해, 폰트 준비 완료 후 한 번 더 그린다.

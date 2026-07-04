@@ -411,6 +411,7 @@
 
 .tm-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   flex-shrink: 0;
 }
@@ -509,6 +510,70 @@
   height: 14px;
   accent-color: var(--accent);
   cursor: pointer;
+}
+
+.field-stroke-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.field-stroke-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.field-stroke-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.field-gradient-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.field-gradient-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.field-gradient-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.field-gradient-colors {
+  display: flex;
+  gap: 6px;
+}
+
+.bg-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bg-color-row .field-reset-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
 }
 
 .field-card-body input[type="text"]:disabled {
