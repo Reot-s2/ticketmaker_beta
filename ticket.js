@@ -14,6 +14,7 @@ const FONT_OPTIONS = [
   { label: "Meongi Black (only English)", family: "'Cafe24MeongiBlack', sans-serif" },
   { label: "던파 비트비트체v2", family: "'DnfBitbeatV2', sans-serif" },
   { label: "온글잎 박다현체", family: "'OngleipParkDahyeon', cursive" },
+  { label: "Noto Serif JP (일본어/한자)", family: "'Noto Serif JP', serif" },
 ];
 
 /* =====================================================================
@@ -187,6 +188,7 @@ function createTextItemFromField(field) {
     gradientEnabled: !!field.gradientEnabled,
     gradientColor1: field.gradientColor1 || "#ffffff",
     gradientColor2: field.gradientColor2 || "#000000",
+    vertical: !!field.vertical,
   };
 }
 
@@ -195,7 +197,7 @@ function ensureSideState(templateId, side) {
   state.data[templateId] = state.data[templateId] || {};
   if (!state.data[templateId][side]) {
     const textItems = tpl[side].fields.map(createTextItemFromField);
-    state.data[templateId][side] = { layers: [], textItems, dividerOrientation: "horizontal" };
+    state.data[templateId][side] = { layers: [], textItems, dividerOrientation: "horizontal", dividerVisible: true };
   }
   return state.data[templateId][side];
 }
@@ -233,6 +235,7 @@ function cloneSideDataForHistory(data) {
     layers: data.layers.map(cloneLayerForHistory),
     textItems: data.textItems.map(cloneTextItemForHistory),
     dividerOrientation: data.dividerOrientation,
+    dividerVisible: data.dividerVisible !== false,
   };
 }
 
@@ -442,6 +445,12 @@ function composeFont(item) {
   return `${style}${weight} ${item.fontSize}px ${item.fontFamily}`;
 }
 
+// 입력창에 Enter로 줄이 늘어나면 스크롤 없이 내용이 다 보이도록 높이를 자동으로 맞춘다.
+function autoGrowTextarea(el) {
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
+
 /* =====================================================================
    캔버스 렌더링
    ===================================================================== */
@@ -498,12 +507,42 @@ function drawLine(deco) {
 function drawDecorations(decorations, data) {
   (decorations || []).forEach((deco) => {
     if (deco.type === "line") {
+      if (data.dividerVisible === false) return; // 구분선 끄기
       const coords = deco.variants ? deco.variants[data.dividerOrientation || "horizontal"] : deco;
       drawLine({ ...deco, ...coords });
     } else if (deco.type === "text") {
       drawStaticText(deco);
     }
   });
+}
+
+// 세로쓰기 레이아웃 계산: 줄바꿈(\n)마다 새 칼럼을 만들고, 칼럼은 item.x를 기준으로
+// 왼쪽에서 오른쪽으로(한국어식 세로쓰기 진행 방향) 진행된다. 칼럼 안에서는 글자가
+// item.fontSize 기준 한 칸씩 위→아래로 쌓인다. align은 가로쓰기에서의 좌/중/우 대신
+// 세로 방향(위쪽 시작/가운데/아래쪽 끝)을 의미하게 된다.
+function getVerticalLayout(item, text) {
+  const lines = (text || " ").split("\n");
+  const charStep = item.lineHeight || Math.round(item.fontSize * 1.3);
+  const colStep = Math.round(item.fontSize * 1.15);
+  const columns = lines.map((line) => Array.from(line || " "));
+  const maxChars = Math.max(...columns.map((chars) => chars.length), 1);
+
+  const align = item.align || "left";
+  let startY;
+  if (align === "center") startY = item.y - ((maxChars - 1) * charStep) / 2;
+  else if (align === "right") startY = item.y - (maxChars - 1) * charStep;
+  else startY = item.y;
+
+  return { columns, charStep, colStep, maxChars, startY };
+}
+
+function computeVerticalBBox(item, text) {
+  const { columns, charStep, colStep, maxChars, startY } = getVerticalLayout(item, text);
+  const colCount = columns.length;
+  const w = colCount * colStep;
+  const h = Math.max(maxChars * charStep, item.fontSize);
+  const x0 = item.x - colStep / 2;
+  return { x: x0, y: startY - item.fontSize * 0.85, w, h };
 }
 
 // 텍스트 항목의 대략적인 경계 상자를 계산한다 (선택/드래그 히트테스트용).
@@ -523,7 +562,13 @@ function computeTextItemBBox(item) {
   const value = (item.text ?? "").toString();
   const displayText = value.trim() ? value : item.placeholder || "";
   const text = displayText || " ";
-  const lines = item.type === "multiline" ? wrapText(ctx, text, item.maxWidth || 300) : [text];
+
+  if (item.vertical) {
+    return computeVerticalBBox(item, text);
+  }
+
+  // 개행(\n)이 있는 값도 자동 줄바꿈과 함께 그대로 반영되도록 항상 wrapText를 쓴다.
+  const lines = wrapText(ctx, text, item.maxWidth || 300);
   const lineHeight = item.lineHeight || Math.round(item.fontSize * 1.3);
   const widths = lines.map((l) => ctx.measureText(l || " ").width);
   const w = Math.max(...widths, 24);
@@ -533,6 +578,70 @@ function computeTextItemBBox(item) {
   const ascent = item.fontSize;
   const h = Math.max(lines.length * lineHeight, ascent);
   return { x: x0, y: item.y - ascent * 0.85, w, h };
+}
+
+// 세로쓰기 렌더링: 칼럼별로 글자를 위→아래로 하나씩 그린다.
+function drawVerticalText(item, text) {
+  const { columns, charStep, colStep, startY } = getVerticalLayout(item, text);
+  const savedAlign = ctx.textAlign;
+  ctx.textAlign = "center"; // 글자를 칼럼 중앙에 맞춘다 (item.align은 위/중/아래 의미로 쓰인다).
+  columns.forEach((chars, colIndex) => {
+    const x = item.x + colIndex * colStep;
+    chars.forEach((ch, rowIndex) => {
+      const y = startY + rowIndex * charStep;
+      fillTextWithStroke(item, ch, x, y);
+    });
+  });
+  ctx.textAlign = savedAlign;
+}
+
+// 정렬 버튼을 누를 때 글자 뭉치가 화면 반대편으로 확 튀어 보이지 않도록, 글자 뭉치의
+// 시각적 중심은 그대로 두고 정렬 기준(anchor 좌표)만 다시 계산한다.
+function rebaseAnchorForAlign(item, newAlign) {
+  const oldAlign = item.align || "left";
+  if (oldAlign === newAlign) return;
+
+  if (item.type === "rating") {
+    const w = item.fontSize * 5 * 1.1;
+    let ratingCenter;
+    if (oldAlign === "center") ratingCenter = item.x;
+    else if (oldAlign === "right") ratingCenter = item.x - w / 2;
+    else ratingCenter = item.x + w / 2;
+
+    if (newAlign === "center") item.x = ratingCenter;
+    else if (newAlign === "right") item.x = ratingCenter + w / 2;
+    else item.x = ratingCenter - w / 2;
+    return;
+  }
+
+  ctx.font = composeFont(item);
+  const value = (item.text ?? "").toString();
+  const displayText = value.trim() ? value : item.placeholder || "";
+  const text = displayText || " ";
+
+  if (item.vertical) {
+    // getVerticalLayout은 지금(oldAlign) 기준의 startY를 알려주므로, 거기서 세로 중심을
+    // 구한 뒤 newAlign 기준으로 item.y를 되돌려 계산한다.
+    const { charStep, maxChars, startY } = getVerticalLayout(item, text);
+    const span = (maxChars - 1) * charStep;
+    const center = startY + span / 2;
+    if (newAlign === "center") item.y = center;
+    else if (newAlign === "right") item.y = center + span / 2;
+    else item.y = center - span / 2;
+    return;
+  }
+
+  const lines = wrapText(ctx, text, item.maxWidth || 300);
+  const widths = lines.map((l) => ctx.measureText(l || " ").width);
+  const w = Math.max(...widths, 24);
+  let center;
+  if (oldAlign === "center") center = item.x;
+  else if (oldAlign === "right") center = item.x - w / 2;
+  else center = item.x + w / 2;
+
+  if (newAlign === "center") item.x = center;
+  else if (newAlign === "right") item.x = center + w / 2;
+  else item.x = center - w / 2;
 }
 
 // 편집 중인 줄 끝에 깜빡이는 커서를 그린다 (실제 캐럿 위치까지는 아니고 마지막 글자 뒤).
@@ -636,22 +745,20 @@ function drawTextItem(item, tpl) {
   ctx.textAlign = item.align || "left";
   ctx.textBaseline = "alphabetic";
 
-  let lastLineText = "";
-  let lastLineY = item.y;
-
-  if (item.type === "multiline") {
-    const lines = wrapText(ctx, displayText || " ", item.maxWidth || 300);
-    const lineHeight = item.lineHeight || Math.round(item.fontSize * 1.3);
-    // fillText의 4번째 인자(maxWidth)를 넘기면 글자가 찌그러지므로 쓰지 않는다.
-    // 줄바꿈은 이미 wrapText에서 처리했으니, 넘치는 단어가 있어도 그대로 흘러넘치게 둔다.
-    lines.forEach((line, i) => fillTextWithStroke(item, line, item.x, item.y + i * lineHeight));
-    lastLineText = lines[lines.length - 1] || "";
-    lastLineY = item.y + (lines.length - 1) * lineHeight;
-  } else {
-    fillTextWithStroke(item, displayText, item.x, item.y);
-    lastLineText = displayText;
-    lastLineY = item.y;
+  if (item.vertical) {
+    drawVerticalText(item, displayText || " ");
+    // 세로쓰기는 칼럼 구조가 있어 커서 위치 계산이 복잡해지므로 편집 커서 표시는 생략한다.
+    return;
   }
+
+  // 개행(\n)이 있는 값도 자동 줄바꿈과 함께 그대로 반영되도록 항상 wrapText를 쓴다.
+  const lines = wrapText(ctx, displayText || " ", item.maxWidth || 300);
+  const lineHeight = item.lineHeight || Math.round(item.fontSize * 1.3);
+  // fillText의 4번째 인자(maxWidth)를 넘기면 글자가 찌그러지므로 쓰지 않는다.
+  // 줄바꿈은 이미 wrapText에서 처리했으니, 넘치는 단어가 있어도 그대로 흘러넘치게 둔다.
+  lines.forEach((line, i) => fillTextWithStroke(item, line, item.x, item.y + i * lineHeight));
+  const lastLineText = lines[lines.length - 1] || "";
+  const lastLineY = item.y + (lines.length - 1) * lineHeight;
 
   if (isEditing && cursorBlinkOn) {
     drawTextCursor(item, lastLineText, lastLineY);
@@ -1136,9 +1243,8 @@ function startInlineTextEdit(item) {
   selected = { type: "text", id: item.id };
   editingItemId = item.id;
 
-  const isMultiline = item.type === "multiline";
-  const inputEl = document.createElement(isMultiline ? "textarea" : "input");
-  if (!isMultiline) inputEl.type = "text";
+  // 모든 텍스트 항목이 개행(Enter)을 쓸 수 있어야 하므로 항상 textarea를 쓴다.
+  const inputEl = document.createElement("textarea");
   inputEl.className = "inline-text-capture";
   inputEl.value = item.text || "";
 
@@ -1169,10 +1275,9 @@ function startInlineTextEdit(item) {
   inputEl.addEventListener("blur", stopEditing);
   inputEl.addEventListener("keydown", (ev) => {
     ev.stopPropagation();
-    if (ev.key === "Enter" && !isMultiline) {
-      ev.preventDefault();
-      inputEl.blur();
-    } else if (ev.key === "Escape") {
+    // Enter는 이제 모든 항목에서 줄바꿈으로 쓰인다 (textarea 기본 동작 그대로 둔다).
+    // 편집을 마치려면 Escape를 누르거나 다른 곳을 클릭하면 된다.
+    if (ev.key === "Escape") {
       inputEl.blur();
     }
   });
@@ -1587,24 +1692,37 @@ bgColorResetBtn.addEventListener("click", () => {
   renderCanvas();
 });
 
-/* ---------- 구분선 방향 (파스텔 필름 뒷면 전용) ---------- */
+/* ---------- 구분선 (표시 켜기/끄기 + 일부 템플릿은 방향도 선택 가능) ---------- */
 const dividerSectionEl = document.getElementById("dividerSection");
+const dividerVisibleCheckbox = document.getElementById("dividerVisibleCheckbox");
+const dividerOrientationWrap = document.getElementById("dividerOrientationWrap");
 const dividerHorizontalBtn = document.getElementById("dividerHorizontalBtn");
 const dividerVerticalBtn = document.getElementById("dividerVerticalBtn");
+
+function templateHasDivider() {
+  const tpl = getActiveTemplate();
+  const sideDef = tpl[state.activeSide];
+  return (sideDef.decorations || []).some((d) => d.type === "line");
+}
 
 function templateHasSelectableDivider() {
   const tpl = getActiveTemplate();
   const sideDef = tpl[state.activeSide];
-  return (sideDef.decorations || []).some((d) => d.variants);
+  return (sideDef.decorations || []).some((d) => d.type === "line" && d.variants);
 }
 
 function renderDividerSection() {
-  if (!templateHasSelectableDivider()) {
+  if (!templateHasDivider()) {
     dividerSectionEl.hidden = true;
     return;
   }
   dividerSectionEl.hidden = false;
-  const orientation = getSideState().dividerOrientation || "horizontal";
+
+  const data = getSideState();
+  dividerVisibleCheckbox.checked = data.dividerVisible !== false;
+
+  dividerOrientationWrap.hidden = !templateHasSelectableDivider();
+  const orientation = data.dividerOrientation || "horizontal";
   dividerHorizontalBtn.classList.toggle("active", orientation === "horizontal");
   dividerVerticalBtn.classList.toggle("active", orientation === "vertical");
 }
@@ -1615,6 +1733,12 @@ function setDividerOrientation(orientation) {
   renderDividerSection();
   renderCanvas();
 }
+
+dividerVisibleCheckbox.addEventListener("change", () => {
+  pushHistory();
+  getSideState().dividerVisible = dividerVisibleCheckbox.checked;
+  renderCanvas();
+});
 
 dividerHorizontalBtn.addEventListener("click", () => setDividerOrientation("horizontal"));
 dividerVerticalBtn.addEventListener("click", () => setDividerOrientation("vertical"));
@@ -1668,6 +1792,34 @@ bulkColorApplyBtn.addEventListener("click", () => {
   renderFieldsPanel();
   renderCanvas();
 });
+
+// 정렬 버튼 아이콘: 좌/중/우 정렬을 굵기가 다른 가로 막대 3개로 표현한다.
+function buildAlignIconSvg(align) {
+  const widths = [16, 11, 14];
+  const bars = widths
+    .map((w, i) => {
+      let x = 0;
+      if (align === "center") x = (16 - w) / 2;
+      else if (align === "right") x = 16 - w;
+      return `<rect x="${x}" y="${i * 5}" width="${w}" height="2" rx="1"></rect>`;
+    })
+    .join("");
+  return `<svg viewBox="0 0 16 12" width="15" height="11" fill="currentColor" aria-hidden="true">${bars}</svg>`;
+}
+
+// 세로쓰기용 정렬 버튼 아이콘: 위/중/아래 정렬을 길이가 다른 세로 막대 3개로 표현한다.
+function buildVerticalAlignIconSvg(align) {
+  const heights = [16, 11, 14];
+  const bars = heights
+    .map((h, i) => {
+      let y = 0;
+      if (align === "center") y = (16 - h) / 2;
+      else if (align === "right") y = 16 - h;
+      return `<rect x="${i * 5}" y="${y}" width="2" height="${h}" rx="1"></rect>`;
+    })
+    .join("");
+  return `<svg viewBox="0 0 16 16" width="11" height="14" fill="currentColor" aria-hidden="true">${bars}</svg>`;
+}
 
 function buildFieldCard(item, tpl) {
   const card = document.createElement("div");
@@ -1749,30 +1901,22 @@ function buildFieldCard(item, tpl) {
       starsWrap.appendChild(starBtn);
     }
     body.appendChild(starsWrap);
-  } else if (item.type === "multiline") {
+  } else {
+    // 모든 텍스트 항목이 Enter로 줄바꿈할 수 있도록 항상 textarea를 쓴다.
+    // 기본은 한 줄 높이지만, Enter로 줄이 늘어나면 입력창 높이도 자동으로 따라 늘어난다.
     const textarea = document.createElement("textarea");
-    textarea.rows = 3;
+    textarea.rows = 1;
     textarea.value = item.text || "";
     textarea.placeholder = item.placeholder || "";
+    textarea.disabled = !!item.useTodayDate;
     textarea.addEventListener("input", () => {
       pushHistoryOnce();
       item.text = textarea.value;
+      autoGrowTextarea(textarea);
       renderCanvas();
     });
     textarea.addEventListener("blur", endHistoryGesture);
-    body.appendChild(textarea);
-  } else {
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = item.text || "";
-    input.placeholder = item.placeholder || "";
-    input.disabled = !!item.useTodayDate;
-    input.addEventListener("input", () => {
-      pushHistoryOnce();
-      item.text = input.value;
-      renderCanvas();
-    });
-    input.addEventListener("blur", endHistoryGesture);
+    requestAnimationFrame(() => autoGrowTextarea(textarea));
 
     if (item.isDateField) {
       const dateToggle = document.createElement("label");
@@ -1783,10 +1927,10 @@ function buildFieldCard(item, tpl) {
       dateCheckbox.addEventListener("change", () => {
         pushHistory();
         item.useTodayDate = dateCheckbox.checked;
-        input.disabled = item.useTodayDate;
+        textarea.disabled = item.useTodayDate;
         if (item.useTodayDate) {
           item.text = formatToday();
-          input.value = item.text;
+          textarea.value = item.text;
         }
         renderCanvas();
       });
@@ -1795,8 +1939,64 @@ function buildFieldCard(item, tpl) {
       body.appendChild(dateToggle);
     }
 
-    body.appendChild(input);
+    body.appendChild(textarea);
   }
+
+  const alignVerticalRow = document.createElement("div");
+  alignVerticalRow.className = "field-align-vertical-row";
+
+  if (item.type !== "rating") {
+    const verticalToggle = document.createElement("label");
+    verticalToggle.className = "field-vertical-toggle";
+
+    const verticalCheckbox = document.createElement("input");
+    verticalCheckbox.type = "checkbox";
+    verticalCheckbox.checked = !!item.vertical;
+    verticalCheckbox.addEventListener("change", () => {
+      pushHistory();
+      item.vertical = verticalCheckbox.checked;
+      renderFieldsPanel(); // 정렬 아이콘(가로용 <-> 세로용)을 다시 그린다.
+      renderCanvas();
+    });
+
+    verticalToggle.appendChild(verticalCheckbox);
+    verticalToggle.appendChild(document.createTextNode(" 세로쓰기"));
+    alignVerticalRow.appendChild(verticalToggle);
+  }
+
+  const alignGroup = document.createElement("div");
+  alignGroup.className = "field-align-group";
+
+  const ALIGN_OPTIONS = item.vertical
+    ? [
+        { value: "left", title: "위쪽 정렬" },
+        { value: "center", title: "가운데 정렬" },
+        { value: "right", title: "아래쪽 정렬" },
+      ]
+    : [
+        { value: "left", title: "왼쪽 정렬" },
+        { value: "center", title: "가운데 정렬" },
+        { value: "right", title: "오른쪽 정렬" },
+      ];
+
+  ALIGN_OPTIONS.forEach((opt) => {
+    const alignBtn = document.createElement("button");
+    alignBtn.type = "button";
+    alignBtn.className = "field-align-btn" + ((item.align || "left") === opt.value ? " active" : "");
+    alignBtn.title = opt.title;
+    alignBtn.innerHTML = item.vertical ? buildVerticalAlignIconSvg(opt.value) : buildAlignIconSvg(opt.value);
+    alignBtn.addEventListener("click", () => {
+      pushHistory();
+      rebaseAnchorForAlign(item, opt.value);
+      item.align = opt.value;
+      Array.from(alignGroup.children).forEach((btn, i) => btn.classList.toggle("active", ALIGN_OPTIONS[i].value === opt.value));
+      renderCanvas();
+    });
+    alignGroup.appendChild(alignBtn);
+  });
+
+  alignVerticalRow.appendChild(alignGroup);
+  body.appendChild(alignVerticalRow);
 
   const styleRow = document.createElement("div");
   styleRow.className = "field-style-row";
@@ -1973,6 +2173,7 @@ function addCustomTextItem() {
     gradientEnabled: false,
     gradientColor1: "#ffffff",
     gradientColor2: "#000000",
+    vertical: false,
   };
 
   data.textItems.push(item);
